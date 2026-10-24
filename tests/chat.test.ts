@@ -14,8 +14,8 @@ const ask = (question: string) => palmistReply({ report, history: [], question }
 describe('palmist chat', () => {
   it.each([
     ['What does my career hold?', () => report.sections.career[0].text],
-    ['Will I find love?', () => report.sections.love[0].text],
-    ['I am tired — what about my health?', () => report.sections.health[0].text],
+    ['What about my friends?', () => report.sections.friendships[0].text],
+    ['I am tired — what about my health?', () => report.sections.wellbeing[0].text],
     ['What should I focus on next year?', () => report.outlook.headline],
     ['What is my lucky colour?', () => report.lucky.color],
     ['Which habit should I start first?', () => report.remedies[0]],
@@ -23,6 +23,22 @@ describe('palmist chat', () => {
     const answer = await ask(question);
     expect(answer.mode).toBe('demo');
     expect(answer.reply).toContain(expected());
+  });
+
+  it('answers a study question with the study style and hacks', async () => {
+    const answer = await ask('How should I study for exams?');
+    expect(answer.reply).toContain(report.study.style);
+    expect(answer.reply).toContain(report.study.tips[0]);
+  });
+
+  it('lists career matches for a career question', async () => {
+    const answer = await ask('Which career fits me?');
+    expect(answer.reply).toContain(report.careers[0].title);
+  });
+
+  it('declines marriage predictions', async () => {
+    const answer = await ask('When will I get married?');
+    expect(answer.reply).toContain(SAFE_COPY.hinglish);
   });
 
   it('answers a challenge question with its solution', async () => {

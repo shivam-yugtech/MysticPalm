@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Icon } from './ui';
 
 export function Accordion({
@@ -8,12 +8,19 @@ export function Accordion({
   onToggle,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   subtitle?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
 }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // A collapsed panel must not take keyboard focus.
+  useEffect(() => {
+    bodyRef.current?.toggleAttribute('inert', !open);
+  }, [open]);
+
   return (
     <section className={`acc${open ? ' is-open' : ''}`}>
       <button type="button" className="acc__head" aria-expanded={open} onClick={onToggle}>
@@ -23,7 +30,7 @@ export function Accordion({
         </span>
         <Icon name="chevron" size={18} className="acc__chevron" />
       </button>
-      <div className="acc__body" aria-hidden={!open}>
+      <div className="acc__body" ref={bodyRef} aria-hidden={!open}>
         <div className="acc__inner">{children}</div>
       </div>
     </section>

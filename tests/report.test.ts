@@ -84,12 +84,16 @@ describe('normalizeReport', () => {
     ['fewer than three essence lines', (raw: ReturnType<typeof validRaw>) => ({ ...raw, essence: ['one', 'two'] })],
     ['a missing section', (raw: ReturnType<typeof validRaw>) => {
       const sections = { ...raw.sections } as Record<string, unknown>;
-      delete sections.health;
+      delete sections.wellbeing;
       return { ...raw, sections };
     }],
     ['no strengths', (raw: ReturnType<typeof validRaw>) => ({ ...raw, strengths: [] })],
     ['incomplete lucky elements', (raw: ReturnType<typeof validRaw>) => ({ ...raw, lucky: { color: 'Gold' } })],
     ['no remedies', (raw: ReturnType<typeof validRaw>) => ({ ...raw, remedies: [] })],
+    ['a missing persona', (raw: ReturnType<typeof validRaw>) => ({ ...raw, persona: { title: 'Only a title' } })],
+    ['no superpower', (raw: ReturnType<typeof validRaw>) => ({ ...raw, superpower: '' })],
+    ['an incomplete study style', (raw: ReturnType<typeof validRaw>) => ({ ...raw, study: { style: 'Visual' } })],
+    ['fewer than three careers', (raw: ReturnType<typeof validRaw>) => ({ ...raw, careers: raw.careers.slice(0, 2) })],
     ['a challenge with no solution', (raw: ReturnType<typeof validRaw>) => ({
       ...raw,
       challenges: [{ problem: 'Something to work on' }],
@@ -146,17 +150,17 @@ describe('safety guard', () => {
 
   it('finds the exact field that breaks the rule and redacts only that field', () => {
     const report = normalizeReport(validRaw(), meta());
-    report.sections.health[0].text = 'You will die soon.';
+    report.sections.wellbeing[0].text = 'You will die soon.';
 
     const hits = bannedClaimsIn(report);
     expect(hits).toHaveLength(1);
-    expect(hits[0].path).toBe('sections.health.0.text');
+    expect(hits[0].path).toBe('sections.wellbeing.0.text');
 
     const safe = redactUnsafe(report);
-    expect(safe.sections.health[0].text).toBe(SAFE_COPY.en);
+    expect(safe.sections.wellbeing[0].text).toBe(SAFE_COPY.en);
     expect(safe.sections.career[0].text).toBe('career reading text.');
     // The original report is untouched.
-    expect(report.sections.health[0].text).toBe('You will die soon.');
+    expect(report.sections.wellbeing[0].text).toBe('You will die soon.');
   });
 });
 

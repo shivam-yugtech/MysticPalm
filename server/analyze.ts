@@ -11,7 +11,7 @@ import { demoReading } from './demo';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const model = () => process.env.ANTHROPIC_MODEL?.trim() || 'claude-sonnet-5-5';
-const MAX_TOKENS = 8000;
+const MAX_TOKENS = 16000;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 export class AnalysisError extends Error {
@@ -78,9 +78,9 @@ async function callModel(
   messages: ModelMessage[],
   system: string,
   apiKey: string,
-): Promise<unknown> {
+): Promise<{ parsed: unknown; rawText: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), 180_000);
   let res: Response;
   try {
     res = await fetch(API_URL, {
@@ -109,7 +109,7 @@ async function callModel(
   }
 
   const body = (await res.json().catch(() => null)) as
-    | { content?: { type: string; text?: string }[]; error?: { message?: string } }
+    | { content?: { type: string; text?: string }[]; stop_reason?: string; error?: { message?: string } }
     | null;
 
   if (!res.ok) {
@@ -121,6 +121,10 @@ async function callModel(
       throw new AnalysisError('The palmist is booked out for a moment. Try again in a minute.', 429);
     }
     throw new AnalysisError(`The reading service returned an error: ${detail}`, 502);
+  }
+
+  if (body?.stop_reason === 'refusal') {
+    throw new AnalysisError('This photo could not be read as a palm. Try a clearer photo of your open hand.', 422);
   }
 
   const textContent = (body?.content ?? [])
@@ -162,7 +166,7 @@ export async function createReading(input: {
   const meta = { language: profile.language, mode: 'live' as const, bothHands, model: model() };
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const { parsed: raw, rawText } = await callModel(messages, system, apiKey) as { parsed: unknown; rawText: string };
+    const { parsed: raw, rawText } = await callModel(messages, system, apiKey);
     let candidate: Report | null = null;
     let correction: string;
 
@@ -182,7 +186,7 @@ export async function createReading(input: {
         .map((u) => u.rules.join('+'))
         .join(', ')}) in these fields: ${unsafe
         .map((u) => u.path)
-        .join(', ')}. Rewrite the whole reading without any reference to death, lifespan, disease, diagnosis, pregnancy, children or legal outcomes. Keep health as general lifestyle tendencies.`;
+        .join(', ')}. Rewrite the whole reading without any reference to death, lifespan, disease, diagnosis, pregnancy, children, marriage predictions, guarantees or legal outcomes. Keep wellbeing as general lifestyle tendencies.`;
     }
 
     messages.push({ role: 'assistant', content: rawText });

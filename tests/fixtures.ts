@@ -1,9 +1,21 @@
 import type { Language } from '../src/lib/report';
 
-export const sectionKeys = ['personality', 'career', 'love', 'family', 'health'] as const;
+export const sectionKeys = ['personality', 'studies', 'career', 'friendships', 'wellbeing'] as const;
 
 /** A complete reading in the shape the model is asked to return. */
 export const validRaw = () => ({
+  persona: { title: 'The Curious Creator', tagline: 'Ideas everywhere, one finished at a time.' },
+  superpower: 'Explaining hard things simply.',
+  study: {
+    style: 'Learns by drawing and talking it out.',
+    bestTime: 'Early morning',
+    tips: ['25-minute sprints.', 'Mind maps.', 'Teach a friend.'],
+  },
+  careers: [
+    { title: 'Design', why: 'Full Apollo mount.' },
+    { title: 'Teaching', why: 'Firm Mercury mount.' },
+    { title: 'Research', why: 'Long head line.' },
+  ],
   handType: 'Air',
   handTypeNote: 'A square palm with long fingers.',
   clarityScore: 80,

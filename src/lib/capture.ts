@@ -1,11 +1,12 @@
+import type { HandTrace } from './palmGeometry';
 import type { QualityResult } from './quality';
 import type { PhotoRole, Profile } from './report';
 
 export type PhotoSlot =
   | { status: 'empty' }
-  | { status: 'checking' }
-  | { status: 'ready'; upload: string; result: QualityResult; confirmed: boolean }
-  | { status: 'rejected'; upload: string; result: QualityResult };
+  | { status: 'checking'; upload?: string }
+  | { status: 'ready'; upload: string; result: QualityResult; confirmed: boolean; trace?: HandTrace | null }
+  | { status: 'rejected'; upload: string; result: QualityResult; trace?: HandTrace | null };
 
 export type PhotoSlots = Partial<Record<PhotoRole, PhotoSlot>>;
 

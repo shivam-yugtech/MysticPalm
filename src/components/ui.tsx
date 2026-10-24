@@ -145,7 +145,11 @@ export function Brand({ onClick, compact }: { onClick?: () => void; compact?: bo
           />
         </svg>
       </span>
-      {!compact && <span className="brand__name">MysticPalm</span>}
+      {!compact && (
+        <span className="brand__name">
+          Mystic<b>Palm</b>
+        </span>
+      )}
     </>
   );
   return onClick ? (
@@ -250,8 +254,8 @@ export function ScoreRing({ value, label }: { value: number; label: string }) {
       <svg viewBox="0 0 84 84" className="score__ring" aria-hidden="true">
         <defs>
           <linearGradient id={`score-${id}`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#f6dfa4" />
-            <stop offset="100%" stopColor="#e9a96a" />
+            <stop offset="0%" stopColor="#7cf7d4" />
+            <stop offset="100%" stopColor="#b388ff" />
           </linearGradient>
         </defs>
         <circle cx="42" cy="42" r={radius} className="score__track" />
@@ -299,7 +303,7 @@ export function Disclaimer({ language }: { language: Language }) {
   return (
     <footer className="disclaimer">
       <span className="disclaimer__mark" aria-hidden="true">
-        ✦
+        ✌️
       </span>
       <p>{t(language, 'disclaimer')}</p>
     </footer>
