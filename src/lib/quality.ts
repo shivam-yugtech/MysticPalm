@@ -19,7 +19,8 @@ export type QualityCode =
   | 'blurry'
   | 'no-hand'
   | 'back-of-hand'
-  | 'too-far';
+  | 'too-far'
+  | 'no-landmarks';
 
 export interface QualityMetrics {
   brightness: number;

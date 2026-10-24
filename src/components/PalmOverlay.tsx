@@ -1,58 +1,90 @@
-import { useState, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { t } from '../lib/i18n';
+import {
+  LINE_COLORS,
+  PALM_LINE_IDS,
+  palmLinesFrom,
+  strokeUnit,
+  TEMPLATE_TRACE,
+  type HandTrace,
+  type PalmLineId,
+} from '../lib/palmGeometry';
 import { findingOf, type Language, type Report } from '../lib/report';
-import { HandGuide, LINE_COLORS, PALM_LINES } from './HandGuide';
+import { HandGuide } from './HandGuide';
+import { HandMesh } from './HandMesh';
+import { TraceHud } from './TraceHud';
 import { ConfidencePill } from './ui';
-
-const LINE_IDS = ['life', 'head', 'heart', 'fate'] as const;
 
 export function PalmOverlay({
   report,
   language,
   photo,
+  trace,
 }: {
   report: Report;
   language: Language;
   photo?: string;
+  trace?: HandTrace | null;
 }) {
-  const [active, setActive] = useState<string | null>(null);
+  const [active, setActive] = useState<PalmLineId | null>(null);
   const selected = active ? findingOf(report, active) : undefined;
-  const toggle = (id: string) => setActive((current) => (current === id ? null : id));
+  const toggle = (id: PalmLineId) => setActive((current) => (current === id ? null : id));
+
+  // A photo without a detected hand falls back to the illustrated guide.
+  const onPhoto = Boolean(photo && trace);
+  const shown = onPhoto ? trace! : TEMPLATE_TRACE;
+  const paths = useMemo(() => palmLinesFrom(shown), [shown]);
+  const u = strokeUnit(shown);
 
   return (
     <section className="line-map">
       <div className="section-head">
-        <h2>{t(language, 'lineMap')}</h2>
+        <h2>〰️ {t(language, 'lineMap')}</h2>
         <p>{t(language, 'lineMapNote')}</p>
       </div>
 
-      <div className={`palm-stage${photo ? ' has-photo' : ''}`}>
-        {photo ? (
-          <img className="palm-stage__photo" src={photo} alt="Your palm with a schematic line map" />
+      <div className={`palm-stage${onPhoto ? ' has-photo' : ''}`}>
+        {onPhoto ? (
+          <img className="palm-stage__photo" src={photo} alt="" />
         ) : (
           <div className="palm-stage__ghost">
-            <HandGuide lined />
+            <HandGuide />
           </div>
         )}
         <div className="palm-stage__scrim" aria-hidden="true" />
-        <svg className="palm-stage__map" viewBox="0 0 200 280" preserveAspectRatio="xMidYMid meet">
-          {LINE_IDS.map((id) => {
+        <HandMesh
+          trace={shown}
+          variant="still"
+          language={language}
+          lines={false}
+          labels={false}
+          fit="meet"
+          className="palm-stage__mesh"
+        />
+        <svg
+          className="palm-stage__map"
+          viewBox={`0 0 ${shown.width} ${shown.height}`}
+          preserveAspectRatio="xMidYMid meet"
+        >
+          {PALM_LINE_IDS.map((id, index) => {
             const finding = findingOf(report, id);
             const dim = active !== null && active !== id;
             return (
-              <g key={id} opacity={dim ? 0.22 : 1}>
+              <g key={id} opacity={dim ? 0.2 : 1}>
                 <path
-                  d={PALM_LINES[id]}
+                  d={paths[id]}
                   stroke={LINE_COLORS[id]}
-                  strokeWidth={active === id ? 3.4 : 2.2}
+                  strokeWidth={(active === id ? 4 : 2.6) * u}
                   strokeLinecap="round"
                   fill="none"
+                  pathLength={1}
+                  style={{ '--i': index } as CSSProperties}
                   className={`palm-line${finding?.visible ? '' : ' is-unclear'}`}
                 />
                 <path
-                  d={PALM_LINES[id]}
+                  d={paths[id]}
                   stroke="transparent"
-                  strokeWidth="18"
+                  strokeWidth={18 * u}
                   fill="none"
                   className="palm-line__hit"
                   onClick={() => toggle(id)}
@@ -61,10 +93,11 @@ export function PalmOverlay({
             );
           })}
         </svg>
+        {onPhoto && <TraceHud trace={shown} language={language} delayed={false} />}
       </div>
 
       <div className="legend">
-        {LINE_IDS.map((id) => {
+        {PALM_LINE_IDS.map((id) => {
           const finding = findingOf(report, id);
           return (
             <button
@@ -100,7 +133,7 @@ export function PalmOverlay({
         )}
       </div>
 
-      {!photo && <p className="caption">{t(language, 'notFoundPhoto')}</p>}
+      {!onPhoto && <p className="caption">{t(language, 'notFoundPhoto')}</p>}
       <p className="caption">{t(language, 'lineMapSchematic')}</p>
     </section>
   );

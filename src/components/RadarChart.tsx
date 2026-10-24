@@ -21,11 +21,11 @@ export function RadarChart({ report, language }: { report: Report; language: Lan
 
   return (
     <div className="radar">
-      <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="radar__svg" role="img" aria-label={t(language, 'traitTitle')}>
+      <svg viewBox={`-56 -8 ${SIZE + 112} ${SIZE + 16}`} className="radar__svg" role="img" aria-label={t(language, 'traitTitle')}>
         <defs>
           <radialGradient id={`radar-fill-${id}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(244,140,166,0.55)" />
-            <stop offset="100%" stopColor="rgba(233,196,106,0.22)" />
+            <stop offset="0%" stopColor="rgba(255,110,199,0.5)" />
+            <stop offset="100%" stopColor="rgba(94,231,255,0.25)" />
           </radialGradient>
         </defs>
 

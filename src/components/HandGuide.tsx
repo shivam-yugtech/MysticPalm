@@ -1,17 +1,7 @@
-/** Palm geometry shared by the camera guide, the sample hero and the report overlay. */
-export const PALM_LINES = {
-  life: 'M78 150 C66 176 68 206 86 228',
-  head: 'M140 168 C120 178 96 180 72 174',
-  heart: 'M142 146 C120 140 96 146 78 158',
-  fate: 'M108 232 C110 204 106 180 112 158',
-} as const;
+import { LINE_COLORS, PALM_LINE_IDS, palmLinesFrom, TEMPLATE_TRACE } from '../lib/palmGeometry';
 
-export const LINE_COLORS: Record<keyof typeof PALM_LINES, string> = {
-  life: '#f2c14e',
-  head: '#8ab6ff',
-  heart: '#f48ca6',
-  fate: '#5ce0b3',
-};
+/** Palm lines on the illustrated hand, placed by the same rules used on real photos. */
+const TEMPLATE_LINES = palmLinesFrom(TEMPLATE_TRACE);
 
 export function HandGuide({ lined = false, className = '' }: { lined?: boolean; className?: string }) {
   return (
@@ -35,13 +25,14 @@ export function HandGuide({ lined = false, className = '' }: { lined?: boolean; 
 
       {lined && (
         <g className="hand__lines" strokeLinecap="round">
-          {(Object.keys(PALM_LINES) as (keyof typeof PALM_LINES)[]).map((id) => (
+          {PALM_LINE_IDS.map((id) => (
             <path
               key={id}
-              d={PALM_LINES[id]}
+              d={TEMPLATE_LINES[id]}
               className={`hand__line hand__line--${id}`}
               stroke={LINE_COLORS[id]}
               strokeWidth="2.2"
+              pathLength={1}
             />
           ))}
         </g>

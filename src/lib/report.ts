@@ -36,7 +36,7 @@ export const FEATURES: Feature[] = [
   { id: 'fate', group: 'major', label: 'Fate Line' },
   { id: 'sun', group: 'major', label: 'Sun Line' },
   { id: 'mercury', group: 'minor', label: 'Mercury (Health) Line' },
-  { id: 'marriage', group: 'minor', label: 'Marriage Lines' },
+  { id: 'marriage', group: 'minor', label: 'Relationship Lines' },
   { id: 'bracelet', group: 'minor', label: 'Bracelet (Manibandh)' },
   { id: 'venus_girdle', group: 'minor', label: 'Girdle of Venus' },
   { id: 'intuition', group: 'minor', label: 'Intuition Line' },
@@ -67,8 +67,8 @@ export interface Insight {
   confidence: number;
 }
 
-export type SectionKey = 'personality' | 'career' | 'love' | 'family' | 'health';
-export const SECTION_KEYS: SectionKey[] = ['personality', 'career', 'love', 'family', 'health'];
+export type SectionKey = 'personality' | 'studies' | 'career' | 'friendships' | 'wellbeing';
+export const SECTION_KEYS: SectionKey[] = ['personality', 'studies', 'career', 'friendships', 'wellbeing'];
 
 export interface BothHands {
   inherited: string;
@@ -82,7 +82,22 @@ export interface Challenge {
   solution: string;
 }
 
+export interface CareerMatch {
+  title: string;
+  why: string;
+}
+
+export interface StudyStyle {
+  style: string;
+  bestTime: string;
+  tips: string[];
+}
+
 export interface Report {
+  persona: { title: string; tagline: string };
+  superpower: string;
+  study: StudyStyle;
+  careers: CareerMatch[];
   handType: HandType;
   handTypeNote: string;
   clarityScore: number;
@@ -104,10 +119,12 @@ export interface Report {
   model?: string;
 }
 
+export type Stage = 'school' | 'college' | 'other';
+
 export interface Profile {
   name?: string;
-  dob?: string;
-  gender?: string;
+  stage?: Stage;
+  stream?: string;
   dominantHand: 'right' | 'left';
   handChoice: HandChoice;
   language: Language;
@@ -121,6 +138,7 @@ export class ReadingError extends Error {
 }
 
 const HAND_TYPES: HandType[] = ['Earth', 'Air', 'Fire', 'Water'];
+export const HAND_EMOJI: Record<HandType, string> = { Earth: '🌱', Air: '☁️', Fire: '🔥', Water: '🌊' };
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -158,6 +176,28 @@ export function normalizeReport(
 
   const essence = strList(raw.essence, 3);
   if (essence.length < 3) issues.push('essence needs three lines');
+
+  const personaRaw = isObject(raw.persona) ? raw.persona : {};
+  const persona = { title: str(personaRaw.title), tagline: str(personaRaw.tagline) };
+  if (!persona.title || !persona.tagline) issues.push('persona needs a title and a tagline');
+
+  const superpower = str(raw.superpower);
+  if (!superpower) issues.push('superpower is empty');
+
+  const studyRaw = isObject(raw.study) ? raw.study : {};
+  const study: StudyStyle = {
+    style: str(studyRaw.style),
+    bestTime: str(studyRaw.bestTime),
+    tips: strList(studyRaw.tips, 4),
+  };
+  if (!study.style || !study.bestTime || study.tips.length < 2) issues.push('study style is incomplete');
+
+  const careers: CareerMatch[] = (Array.isArray(raw.careers) ? raw.careers : [])
+    .filter(isObject)
+    .map((item) => ({ title: str(item.title), why: str(item.why) }))
+    .filter((item) => item.title && item.why)
+    .slice(0, 4);
+  if (careers.length < 3) issues.push('careers needs three matches');
 
   // Findings: the model may omit a feature, but the report must still account for it.
   const rawFindings = Array.isArray(raw.findings) ? raw.findings.filter(isObject) : [];
@@ -271,6 +311,10 @@ export function normalizeReport(
   for (const { key } of TRAITS) traits[key] = clamp(traitsRaw[key], 50);
 
   return {
+    persona,
+    superpower,
+    study,
+    careers,
     handType: handType!,
     handTypeNote: str(raw.handTypeNote),
     clarityScore: clamp(raw.clarityScore, 60),

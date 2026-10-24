@@ -3,6 +3,7 @@ import { Header, Toast } from './components/ui';
 import { analyzeHands, fetchSample } from './lib/api';
 import { requiredRoles, type PhotoSlots } from './lib/capture';
 import { t } from './lib/i18n';
+import type { HandTrace } from './lib/palmGeometry';
 import type { Language, PhotoRole, Profile } from './lib/report';
 import { clearReading, loadReading, saveReading, type StoredReading } from './lib/session';
 import { Capture } from './screens/Capture';
@@ -13,16 +14,24 @@ import { Scanning } from './screens/Scanning';
 
 type Route = 'home' | 'details' | 'capture' | 'scan' | 'report';
 const ROUTES: Route[] = ['home', 'details', 'capture', 'scan', 'report'];
-const MIN_SCAN_MS = 2400;
+const MIN_SCAN_MS = 4200;
+const LANG_KEY = 'mysticpalm.lang';
 
 const readRoute = (): Route => {
   const hash = window.location.hash.replace(/^#\/?/, '') as Route;
   return ROUTES.includes(hash) ? hash : 'home';
 };
 
+const urlFor = (route: Route) => (route === 'home' ? window.location.pathname : `#/${route}`);
+
 const initialLanguage = (): Language => {
-  const stored = localStorage.getItem('mysticpalm.lang') as Language | null;
-  return stored && ['en', 'hi', 'hinglish'].includes(stored) ? stored : 'hinglish';
+  try {
+    const stored = localStorage.getItem(LANG_KEY) as Language | null;
+    if (stored && ['en', 'hi', 'hinglish'].includes(stored)) return stored;
+  } catch {
+    // Storage can be blocked; fall back to the default.
+  }
+  return 'hinglish';
 };
 
 const emptyProfile = (language: Language): Profile => ({
@@ -44,35 +53,43 @@ export default function App() {
   const [profile, setProfile] = useState<Profile>(restored?.profile ?? emptyProfile(language));
   const [slots, setSlots] = useState<PhotoSlots>({});
   const [reportPhoto, setReportPhoto] = useState<string | undefined>();
+  const [reportTrace, setReportTrace] = useState<HandTrace | null>(null);
   const [scan, setScan] = useState<{ status: 'running' | 'error'; detail?: string }>({ status: 'running' });
   const [sampleBusy, setSampleBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const started = useRef(false);
+  const clearToast = useCallback(() => setToast(null), []);
+  const scanSlot = slots[requiredRoles(profile)[0]];
 
   const go = useCallback(
     (next: Route, replace = false) => {
       // Guard against a double tap pushing the same screen twice.
       if (next === route) return;
-      const url = next === 'home' ? window.location.pathname : `#/${next}`;
-      window.history[replace ? 'replaceState' : 'pushState'](null, '', url);
+      window.history[replace ? 'replaceState' : 'pushState'](null, '', urlFor(next));
       setRoute(next);
       window.scrollTo({ top: 0, behavior: 'auto' });
     },
     [route],
   );
 
+  // Keep the URL in step with the screen actually shown after a reload.
+  useEffect(() => {
+    if (readRoute() !== route) window.history.replaceState(null, '', urlFor(route));
+  }, []); // first mount only
+
   useEffect(() => {
     const onPop = () => {
       const next = readRoute();
       if (next === 'report' && !reading) {
-        window.history.replaceState(null, '', window.location.pathname);
+        window.history.replaceState(null, '', urlFor('home'));
         setRoute('home');
         return;
       }
       // Never re-run analysis by stepping back into the scanning screen.
-      if (next === 'scan' && reading) {
-        window.history.replaceState(null, '', '#/report');
-        setRoute('report');
+      if (next === 'scan') {
+        const target: Route = reading ? 'report' : 'capture';
+        window.history.replaceState(null, '', urlFor(target));
+        setRoute(target);
         return;
       }
       setRoute(next);
@@ -86,16 +103,14 @@ export default function App() {
     document.documentElement.lang = language === 'hi' ? 'hi' : 'en';
   }, [language]);
 
-  // A stale #/report link in a fresh tab has no reading behind it: point the URL home.
-  useEffect(() => {
-    if (route === 'home' && readRoute() !== 'home') {
-      window.history.replaceState(null, '', window.location.pathname);
-    }
-  }, [route]);
-
   const changeLanguage = (next: Language) => {
+    if (next === language) return;
     setLanguage(next);
-    localStorage.setItem('mysticpalm.lang', next);
+    try {
+      localStorage.setItem(LANG_KEY, next);
+    } catch {
+      // ignore
+    }
     setProfile((current) => ({ ...current, language: next }));
     if (route === 'report') setToast(t(next, 'languageNotice'));
   };
@@ -108,7 +123,7 @@ export default function App() {
     });
 
     if (photos.some((photo) => photo === null)) {
-      go('capture');
+      go('capture', true);
       return;
     }
 
@@ -126,6 +141,8 @@ export default function App() {
       setReading(stored);
       saveReading(stored);
       setReportPhoto(photos[0]?.dataUrl);
+      const first = slots[roles[0]];
+      setReportTrace(first?.status === 'ready' ? first.trace ?? null : null);
       // The photo is dropped from memory as soon as the reading exists.
       setSlots({});
       go('report', true);
@@ -147,27 +164,36 @@ export default function App() {
     void runAnalysis();
   }, [route, runAnalysis]);
 
+  const beginReading = () => {
+    setProfile((current) => ({ ...emptyProfile(language), name: current.name, stage: current.stage, stream: current.stream }));
+    setSlots({});
+    setReportPhoto(undefined);
+    setReportTrace(null);
+    setScan({ status: 'running' });
+    go('details');
+  };
+
   const startNew = () => {
     clearReading();
     setReading(null);
     setReportPhoto(undefined);
+    setReportTrace(null);
     setSlots({});
-    setProfile(emptyProfile(language));
+    setProfile((current) => ({ ...emptyProfile(language), name: current.name, stage: current.stage, stream: current.stream }));
     setScan({ status: 'running' });
     go('details', true);
   };
 
   const openSample = async () => {
+    if (sampleBusy) return;
     setSampleBusy(true);
     try {
       const { report } = await fetchSample();
-      const stored: StoredReading = {
-        report,
-        profile: { ...emptyProfile(report.language), name: undefined },
-      };
+      const stored: StoredReading = { report, profile: emptyProfile(report.language) };
       setReading(stored);
       saveReading(stored);
       setReportPhoto(undefined);
+      setReportTrace(null);
       setSlots({});
       go('report');
     } catch (error) {
@@ -179,20 +205,20 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className="sky" aria-hidden="true" />
+      <div className="sky" aria-hidden="true">
+        <span className="blob blob--1" />
+        <span className="blob blob--2" />
+        <span className="blob blob--3" />
+      </div>
       <div className="shell">
         <Header language={language} onLanguage={changeLanguage} onHome={() => go('home')} />
 
         {route === 'home' && (
           <Landing
             language={language}
-            onStart={() => {
-              setProfile(emptyProfile(language));
-              setSlots({});
-              setReportPhoto(undefined);
-              go('details');
-            }}
+            onStart={beginReading}
             onSample={() => void openSample()}
+            onResume={reading ? () => go('report') : undefined}
             sampleBusy={sampleBusy}
           />
         )}
@@ -225,6 +251,8 @@ export default function App() {
             language={language}
             status={scan.status}
             detail={scan.detail}
+            photo={scanSlot?.status === 'ready' ? scanSlot.upload : undefined}
+            trace={scanSlot?.status === 'ready' ? scanSlot.trace : null}
             onRetry={() => {
               started.current = true;
               void runAnalysis();
@@ -238,6 +266,7 @@ export default function App() {
             report={reading.report}
             profile={reading.profile}
             photo={reportPhoto}
+            trace={reportTrace}
             language={language}
             onNewReading={startNew}
             onToast={setToast}
@@ -245,7 +274,7 @@ export default function App() {
         )}
       </div>
 
-      <Toast message={toast} onDone={() => setToast(null)} />
+      <Toast message={toast} onDone={clearToast} />
     </div>
   );
 }

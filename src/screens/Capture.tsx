@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { HandGuide } from '../components/HandGuide';
+import { HandMesh } from '../components/HandMesh';
+import { TraceHud } from '../components/TraceHud';
 import { Icon, PrivacyNote, Steps } from '../components/ui';
 import { requiredRoles, slotUsable, type PhotoSlot, type PhotoSlots } from '../lib/capture';
+import { trackVideo, traceImage, warmUpTracker, type TraceResult } from '../lib/handTracker';
 import { t, type CopyKey } from '../lib/i18n';
-import { inspectImage, type QualityCode } from '../lib/quality';
+import type { HandTrace } from '../lib/palmGeometry';
+import { inspectImage, type QualityCode, type QualityResult } from '../lib/quality';
 import type { Language, PhotoRole, Profile } from '../lib/report';
 
 const QUALITY_COPY: Record<QualityCode, CopyKey> = {
@@ -13,7 +17,25 @@ const QUALITY_COPY: Record<QualityCode, CopyKey> = {
   'no-hand': 'qNoHand',
   'back-of-hand': 'qBack',
   'too-far': 'qFar',
+  'no-landmarks': 'qLandmarks',
 };
+
+/**
+ * The tracker sees a real hand far better than the colour heuristic, so a found hand
+ * overrules "no hand" (which also stops the skin-colour check failing darker skin), and
+ * a photo where it finds none gets a warning the user can override.
+ */
+function mergeTrace(result: QualityResult, status: TraceResult['status']): QualityResult {
+  if (status === 'found') {
+    const issues = result.issues.filter((code) => code !== 'no-hand');
+    const score = Math.min(100, result.score + (result.issues.length - issues.length) * 30);
+    return { ...result, issues, score, pass: issues.length === 0 };
+  }
+  if (status === 'none' && result.pass) {
+    return { ...result, warnings: [...result.warnings, 'no-landmarks'], score: Math.max(0, result.score - 10) };
+  }
+  return result;
+}
 
 function QualityPanel({
   slot,
@@ -36,7 +58,10 @@ function QualityPanel({
     {
       key: 'checkHand',
       icon: 'hand',
-      ok: !result.issues.includes('no-hand') && !result.issues.includes('too-far'),
+      ok:
+        !result.issues.includes('no-hand') &&
+        !result.warnings.includes('too-far') &&
+        !result.warnings.includes('no-landmarks'),
     },
     { key: 'checkPalmSide', icon: 'hand', ok: !result.warnings.includes('back-of-hand') },
   ];
@@ -98,7 +123,7 @@ export function Capture({
   language: Language;
   profile: Profile;
   slots: PhotoSlots;
-  onSlots: (slots: PhotoSlots) => void;
+  onSlots: Dispatch<SetStateAction<PhotoSlots>>;
   onBack: () => void;
   onAnalyze: () => void;
 }) {
@@ -109,6 +134,7 @@ export function Capture({
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [liveTrace, setLiveTrace] = useState<HandTrace | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -119,17 +145,20 @@ export function Capture({
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    setLiveTrace(null);
     setCamera('idle');
   }, []);
 
   useEffect(() => stopCamera, [stopCamera]);
 
+  useEffect(() => warmUpTracker('IMAGE'), []);
+
   useEffect(() => {
     const video = videoRef.current;
-    if (camera === 'live' && video && streamRef.current) {
-      video.srcObject = streamRef.current;
-      void video.play().catch(() => undefined);
-    }
+    if (camera !== 'live' || !video || !streamRef.current) return;
+    video.srcObject = streamRef.current;
+    void video.play().catch(() => undefined);
+    return trackVideo(video, setLiveTrace);
   }, [camera]);
 
   const startCamera = async () => {
@@ -140,6 +169,7 @@ export function Capture({
       return;
     }
     setCamera('starting');
+    warmUpTracker('VIDEO');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1440 }, height: { ideal: 1920 } },
@@ -159,31 +189,38 @@ export function Capture({
   const inspect = async (blob: Blob) => {
     const role = activeRole;
     setError(null);
-    onSlots({ ...slots, [role]: { status: 'checking' } });
+    onSlots((current) => ({ ...current, [role]: { status: 'checking' } }));
     try {
-      const { result, upload } = await inspectImage(blob);
+      const { result: pixels, upload } = await inspectImage(blob);
+      onSlots((current) => ({ ...current, [role]: { status: 'checking', upload } }));
+
+      const traced = await traceImage(upload);
+      const trace = traced.status === 'found' ? traced.trace : null;
+      const result = mergeTrace(pixels, traced.status);
+
       const next: PhotoSlot = result.pass
-        ? { status: 'ready', upload, result, confirmed: result.warnings.length === 0 }
-        : { status: 'rejected', upload, result };
+        ? { status: 'ready', upload, result, confirmed: result.warnings.length === 0, trace }
+        : { status: 'rejected', upload, result, trace };
 
-      onSlots({ ...slots, [role]: next });
+      onSlots((current) => ({ ...current, [role]: next }));
 
-      if (both && result.pass) {
+      if (both && result.pass && result.warnings.length === 0) {
         const other: PhotoRole = role === 'left' ? 'right' : 'left';
         const otherSlot = slots[other];
         if (!otherSlot || otherSlot.status === 'empty' || otherSlot.status === 'rejected') {
-          window.setTimeout(() => setActiveRole(other), 500);
+          // Let the trace animation finish before moving to the other hand.
+          window.setTimeout(() => setActiveRole(other), trace ? 3200 : 700);
         }
       }
     } catch {
-      setError(t(language, 'errorGeneric'));
-      onSlots({ ...slots, [role]: { status: 'empty' } });
+      setError(t(language, 'notImage'));
+      onSlots((current) => ({ ...current, [role]: { status: 'empty' } }));
     }
   };
 
   const takePhoto = async () => {
     const video = videoRef.current;
-    if (!video?.videoWidth) return;
+    if (!video?.videoWidth || activeSlot.status === 'checking') return;
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -195,14 +232,14 @@ export function Capture({
 
   const chooseFile = (file: File | undefined) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setError(t(language, 'errorGeneric'));
+    if (file.type && !file.type.startsWith('image/')) {
+      setError(t(language, 'notImage'));
       return;
     }
     void inspect(file);
   };
 
-  const setSlot = (role: PhotoRole, slot: PhotoSlot) => onSlots({ ...slots, [role]: slot });
+  const setSlot = (role: PhotoRole, slot: PhotoSlot) => onSlots((current) => ({ ...current, [role]: slot }));
 
   const labelFor = (role: PhotoRole) =>
     t(language, role === 'left' ? 'handLeft' : 'handRight');
@@ -267,7 +304,9 @@ export function Capture({
           event.preventDefault();
           setDragging(true);
         }}
-        onDragLeave={() => setDragging(false)}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+        }}
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
@@ -277,17 +316,43 @@ export function Capture({
         {camera === 'live' ? (
           <>
             <video ref={videoRef} className="stage__video" playsInline muted />
-            <div className="stage__brackets" aria-hidden="true">
+            <div className={`stage__brackets${liveTrace ? ' is-locked' : ''}`} aria-hidden="true">
               <i />
               <i />
               <i />
               <i />
             </div>
-            <HandGuide className="stage__guide" />
-            <p className="stage__hint">{t(language, 'cameraHint')}</p>
+            {liveTrace ? (
+              <HandMesh trace={liveTrace} variant="live" language={language} lines={false} labels={false} className="stage__mesh" />
+            ) : (
+              <HandGuide className="stage__guide" />
+            )}
+            <p className={`stage__hint${liveTrace ? ' is-locked' : ''}`}>
+              <span className="stage__hint-dot" aria-hidden="true" />
+              {t(language, liveTrace ? 'liveLocked' : 'liveSearching')}
+            </p>
           </>
-        ) : showPreview ? (
-          <img className="stage__photo" src={activeSlot.upload} alt={`${labelFor(activeRole)} ${t(language, 'captureTitle')}`} />
+        ) : showPreview || (activeSlot.status === 'checking' && activeSlot.upload) ? (
+          <>
+            <img
+              className={`stage__photo${activeSlot.status === 'rejected' ? ' is-dim' : ''}`}
+              src={activeSlot.upload}
+              alt={`${labelFor(activeRole)} ${t(language, 'captureTitle')}`}
+            />
+            {showPreview && activeSlot.trace && (
+              <>
+                <HandMesh
+                  key={activeSlot.upload.length + activeRole}
+                  trace={activeSlot.trace}
+                  variant="reveal"
+                  language={language}
+                  fit="meet"
+                  className="stage__mesh"
+                />
+                <TraceHud trace={activeSlot.trace} language={language} />
+              </>
+            )}
+          </>
         ) : (
           <div className="stage__idle">
             <div className="stage__halo" />
@@ -296,12 +361,21 @@ export function Capture({
           </div>
         )}
 
-        {activeSlot.status === 'checking' && (
-          <div className="stage__checking">
-            <span className="spinner" aria-hidden="true" />
-            {t(language, 'checking')}
-          </div>
-        )}
+        {activeSlot.status === 'checking' &&
+          (activeSlot.upload ? (
+            <>
+              <div className="stage__sweep" aria-hidden="true" />
+              <div className="stage__status">
+                <span className="spinner spinner--sm" aria-hidden="true" />
+                {t(language, 'traceDetecting')}
+              </div>
+            </>
+          ) : (
+            <div className="stage__checking">
+              <span className="spinner" aria-hidden="true" />
+              {t(language, 'checking')}
+            </div>
+          ))}
 
         {dragging && <div className="stage__drop">{t(language, 'dropHere')}</div>}
       </div>
@@ -346,10 +420,16 @@ export function Capture({
 
       <div className="capture-actions">
         {camera === 'live' ? (
-          <button type="button" className="btn btn--primary" onClick={() => void takePhoto()}>
-            <Icon name="camera" size={18} />
-            {t(language, 'captureButton')}
-          </button>
+          <>
+            <button type="button" className="btn btn--primary" onClick={() => void takePhoto()}>
+              <Icon name="camera" size={18} />
+              {t(language, 'captureButton')}
+            </button>
+            <button type="button" className="btn btn--ghost" onClick={stopCamera}>
+              <Icon name="close" size={16} />
+              {t(language, 'cancelCamera')}
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -378,7 +458,8 @@ export function Capture({
       <PrivacyNote language={language} long />
 
       <div className="screen-actions">
-        <button type="button" className="btn btn--primary" disabled={!usable} onClick={onAnalyze}>
+        <button type="button" className="btn btn--primary btn--block" disabled={!usable} onClick={onAnalyze}>
+          <span aria-hidden="true">✨</span>
           {t(language, 'analyzing')}
           <Icon name="arrow" size={18} />
         </button>

@@ -1,6 +1,6 @@
 import type { Profile, Report } from './report';
 
-const KEY = 'mysticpalm.reading.v1';
+const KEY = 'mysticpalm.reading.v2';
 
 export interface StoredReading {
   report: Report;
@@ -20,7 +20,10 @@ export function loadReading(): StoredReading | null {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredReading;
-    if (!parsed?.report?.sections || !parsed.profile) return null;
+    const report = parsed?.report;
+    if (!report?.sections || !report.persona || !report.study || !Array.isArray(report.careers) || !parsed.profile) {
+      return null;
+    }
     return parsed;
   } catch {
     return null;

@@ -1,9 +1,11 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
+import type { Server } from 'node:http';
 import { resolve } from 'node:path';
 import { AnalysisError, createReading } from './analyze';
 import { palmistReply, type ChatTurn } from './chat';
+import { checkKey, geminiSpeech } from './tts';
 import { demoReading } from './demo';
-import type { HandChoice, Language, PhotoRole, Profile, Report } from '../src/lib/report';
+import { SECTION_KEYS, type HandChoice, type Language, type PhotoRole, type Profile, type Report, type Stage } from '../src/lib/report';
 
 type Handler = (req: Request, res: Response) => Promise<void>;
 const asyncHandler = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => {
@@ -18,14 +20,15 @@ const text = (value: unknown, max = 80): string | undefined => {
 
 const LANGUAGES: Language[] = ['en', 'hi', 'hinglish'];
 const HANDS: HandChoice[] = ['left', 'right', 'both'];
+const STAGES: Stage[] = ['school', 'college', 'other'];
 
 function readProfile(value: unknown): Profile {
   const raw = (value ?? {}) as Record<string, unknown>;
   const handChoice = HANDS.includes(raw.handChoice as HandChoice) ? (raw.handChoice as HandChoice) : 'right';
   return {
     name: text(raw.name, 60),
-    dob: text(raw.dob, 20),
-    gender: text(raw.gender, 24),
+    stage: STAGES.includes(raw.stage as Stage) ? (raw.stage as Stage) : undefined,
+    stream: text(raw.stream, 40),
     dominantHand: raw.dominantHand === 'left' ? 'left' : 'right',
     handChoice,
     language: LANGUAGES.includes(raw.language as Language) ? (raw.language as Language) : 'hinglish',
@@ -62,6 +65,11 @@ const isReport = (value: unknown): value is Report => {
     Array.isArray(r.essence) &&
     !!r.sections &&
     typeof r.sections === 'object' &&
+    SECTION_KEYS.every((key) => Array.isArray(r.sections[key])) &&
+    Array.isArray(r.challenges) &&
+    Array.isArray(r.remedies) &&
+    !!r.outlook &&
+    !!r.lucky &&
     LANGUAGES.includes(r.language)
   );
 };
@@ -74,7 +82,7 @@ function readHistory(value: unknown): ChatTurn[] {
     .slice(-8);
 }
 
-export async function createApp(options: { dev: boolean }): Promise<express.Express> {
+export async function createApp(options: { dev: boolean; httpServer?: Server }): Promise<express.Express> {
   const app = express();
   app.disable('x-powered-by');
   app.use('/api', express.json({ limit: '12mb' }));
@@ -115,6 +123,32 @@ export async function createApp(options: { dev: boolean }): Promise<express.Expr
     }),
   );
 
+  const geminiKey = (req: Request): string => {
+    const key = String(req.header('x-gemini-key') ?? '').trim();
+    if (!key || key.length > 200) throw new AnalysisError('Add your Gemini API key first.', 400);
+    return key;
+  };
+
+  app.post(
+    '/api/tts/check',
+    asyncHandler(async (req, res) => {
+      await checkKey(geminiKey(req));
+      res.json({ ok: true });
+    }),
+  );
+
+  app.post(
+    '/api/tts',
+    asyncHandler(async (req, res) => {
+      const key = geminiKey(req);
+      const speech = text(req.body?.text, 700);
+      if (!speech) throw new AnalysisError('Nothing to say.', 400);
+      const language = LANGUAGES.includes(req.body?.language) ? (req.body.language as Language) : 'hinglish';
+      const wav = await geminiSpeech({ key, text: speech, language });
+      res.set({ 'content-type': 'audio/wav', 'cache-control': 'no-store' }).send(wav);
+    }),
+  );
+
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'That endpoint does not exist.' });
   });
@@ -122,7 +156,8 @@ export async function createApp(options: { dev: boolean }): Promise<express.Expr
   if (options.dev) {
     const { createServer } = await import('vite');
     const vite = await createServer({
-      server: { middlewareMode: true },
+      // Hot reload shares the app's own HTTP server instead of a second port.
+      server: { middlewareMode: true, hmr: options.httpServer ? { server: options.httpServer } : undefined },
       appType: 'spa',
     });
     app.use(vite.middlewares);

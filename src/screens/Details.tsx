@@ -1,13 +1,19 @@
 import { useState } from 'react';
 import { HandGuide } from '../components/HandGuide';
 import { Icon, Steps } from '../components/ui';
-import { LANGUAGES, t } from '../lib/i18n';
-import type { HandChoice, Language, Profile } from '../lib/report';
+import { LANGUAGES, STREAMS, t, type CopyKey } from '../lib/i18n';
+import type { HandChoice, Language, Profile, Stage } from '../lib/report';
 
-const HANDS: { id: HandChoice; label: 'handLeft' | 'handRight' | 'handBoth'; hint: 'handLeftHint' | 'handRightHint' | 'handBothHint' }[] = [
+const HANDS: { id: HandChoice; label: CopyKey; hint: CopyKey }[] = [
   { id: 'left', label: 'handLeft', hint: 'handLeftHint' },
   { id: 'right', label: 'handRight', hint: 'handRightHint' },
   { id: 'both', label: 'handBoth', hint: 'handBothHint' },
+];
+
+const STAGES: { id: Stage; label: CopyKey; emoji: string }[] = [
+  { id: 'school', label: 'stageSchool', emoji: '🎒' },
+  { id: 'college', label: 'stageCollege', emoji: '🎓' },
+  { id: 'other', label: 'stageOther', emoji: '🌟' },
 ];
 
 export function Details({
@@ -54,7 +60,7 @@ export function Details({
                     <HandGuide className="hand-card__mini is-front" />
                   </>
                 ) : (
-                  <HandGuide className="hand-card__mini" />
+                  <HandGuide className={`hand-card__mini${hand.id === 'left' ? ' is-mirror' : ''}`} />
                 )}
               </span>
               <span className="hand-card__label">{t(language, hand.label)}</span>
@@ -107,25 +113,48 @@ export function Details({
           />
         </label>
 
-        <label className="field">
-          <span>{t(language, 'dobLabel')}</span>
-          <input
-            type="date"
-            value={draft.dob ?? ''}
-            max={new Date().toISOString().slice(0, 10)}
-            onChange={(event) => update({ dob: event.target.value })}
-          />
-        </label>
+        <div className="field">
+          <span id="stage-label">{t(language, 'stageLabel')}</span>
+          <div className="chip-row" role="radiogroup" aria-labelledby="stage-label">
+            {STAGES.map((stage) => {
+              const active = draft.stage === stage.id;
+              return (
+                <button
+                  key={stage.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`pick${active ? ' is-active' : ''}`}
+                  onClick={() => update({ stage: active ? undefined : stage.id })}
+                >
+                  <span aria-hidden="true">{stage.emoji}</span>
+                  {t(language, stage.label)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-        <label className="field">
-          <span>{t(language, 'genderLabel')}</span>
-          <select value={draft.gender ?? ''} onChange={(event) => update({ gender: event.target.value })}>
-            <option value="">{t(language, 'genderNone')}</option>
-            <option value="female">{t(language, 'genderFemale')}</option>
-            <option value="male">{t(language, 'genderMale')}</option>
-            <option value="other">{t(language, 'genderOther')}</option>
-          </select>
-        </label>
+        <div className="field">
+          <span id="stream-label">{t(language, 'streamLabel')}</span>
+          <div className="chip-row" role="radiogroup" aria-labelledby="stream-label">
+            {STREAMS.map((stream) => {
+              const active = draft.stream === stream.id;
+              return (
+                <button
+                  key={stream.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`pick${active ? ' is-active' : ''}`}
+                  onClick={() => update({ stream: active ? undefined : stream.id })}
+                >
+                  {t(language, stream.label)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       <p className="language-note">
@@ -135,8 +164,8 @@ export function Details({
       <div className="screen-actions">
         <button
           type="button"
-          className="btn btn--primary"
-          onClick={() => onContinue({ ...draft, language })}
+          className="btn btn--primary btn--block"
+          onClick={() => onContinue({ ...draft, name: draft.name?.trim() || undefined, language })}
         >
           {t(language, 'toCamera')}
           <Icon name="arrow" size={18} />

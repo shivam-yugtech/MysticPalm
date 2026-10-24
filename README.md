@@ -1,9 +1,9 @@
-# MysticPalm
+# MysticPalm ✋
 
-A mobile-first, AI palmistry reading. Show or upload a palm, get a structured reading of the
-lines, mounts, hand type and traits — every insight carrying an honest confidence score.
-Readings are written in simple Hinglish (the default), English or हिंदी, and every problem the hand
-shows comes with a practical solution.
+A mobile-first AI palm reading **made for students**. Snap your palm and get your **palm persona**,
+**study style + power hour**, **career matches**, **superpower**, **lucky colour/number/day**, level-up
+tips — and a story-ready card to share with friends. Readings are written in simple Hinglish
+(default), English or हिंदी.
 
 ## Run it
 
@@ -13,85 +13,68 @@ cp .env.example .env      # add ANTHROPIC_API_KEY, or leave it empty for demo mo
 npm run dev               # http://localhost:5173
 ```
 
+On Windows you can also double-click `start.bat`.
+
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Express + Vite middleware on one origin (API under `/api`) |
+| `npm run dev` | Express + Vite (with hot reload) on one origin, API under `/api` |
 | `npm run build` | Production SPA build into `dist/` |
-| `npm start` | Serve the built SPA and API (`NODE_ENV=production`) |
+| `npm start` | Serve the built SPA and API (run `npm run build` first) |
 | `npm run typecheck` | Strict TypeScript across client, server and tests |
 | `npm test` | Contract tests (Vitest) |
 
 ### Demo mode
 
-With no `ANTHROPIC_API_KEY`, `/api/analyze` returns a complete sample reading through the same
-validation pipeline, and the report is labelled **Sample reading**. The whole flow — capture,
-quality gate, scanning, report, share, chat — is usable without a key. The bundled sample is
-written in simple Hinglish; live readings follow the chosen language.
+With no `ANTHROPIC_API_KEY`, `/api/analyze` returns a complete sample student reading through the same
+validation pipeline, labelled **Sample reading**. The whole flow — capture, quality check, scanning,
+report, share card, chat with Maya — works without a key.
+
+## Pandit Ji's voice
+
+On the start page students can paste their own Gemini API key. Pandit Ji then speaks through Gemini's
+natural text-to-speech (`gemini-3.8-flash-tts`, Indian male voice when available, playful style).
+The key is stored only in that browser and sent with each voice request through `/api/tts`; the
+server never stores or logs it. Without a key, Hindi/Hinglish use the recorded greeting and English
+uses the browser's built-in voice.
 
 ## How it works
 
-1. **Landing → hand choice** — right/left/both, dominant hand, optional name, date of birth, gender.
-   The reading language is chosen in the header.
-2. **Capture** — live `getUserMedia` camera with a glowing palm guide, gallery upload or drag-and-drop.
-3. **Quality gate** — runs entirely in the browser on raw pixels (`src/lib/quality.ts`): exposure,
-   focus (Laplacian variance measured on the palm itself), skin coverage/largest component for a
-   hand in frame, plus a **non-blocking** heuristic for back-of-hand texture and framing. A failing
-   photo is never uploaded; warnings need an explicit "use anyway".
-4. **Reading** — the compressed photo (≤1024px JPEG) goes to `POST /api/analyze`. The server calls
-   Claude vision with a palmist system prompt, a traditional rulebook and a JSON-schema
-   `output_config`, validates the response against the contract, retries once on structural or
-   safety failures, and redacts any remaining unsafe claim. The rulebook (`server/rules.ts`) fixes
-   how hand type, mount prominence, line quality and marks are read, maps the fullest mount to its
-   ruling planet for the lucky elements, and pairs each problem with one traditional upay.
-5. **Report** — clarity score, annotated line map, animated trait radar, accordions with confidence
-   badges, life phases, 12-month outlook, lucky elements, habits, both-hands comparison, and a
-   solution beside every area to work on.
-6. **Aftercare** — print-to-PDF (browser print dialog, full language support), a 1080×1920 share
-   card, and "Ask the palmist" follow-up chat scoped to that report.
+1. **Landing** — what you'll unlock, how it works, and a sample reading.
+2. **Details** — which hand, writing hand, and optional name, school/college and interests
+   (science, commerce, arts, tech, medical, creative…), used to tune study tips and career matches.
+3. **Capture** — live camera with a palm guide, gallery upload or drag-and-drop. A browser-side
+   quality gate (`src/lib/quality.ts`) checks light, focus and that a palm is in frame before upload.
+   **On-device hand tracking** (MediaPipe Hand Landmarker, `src/lib/handTracker.ts`) finds the 21
+   hand landmarks — live on the camera feed and on each photo — and the app animates them: scan beam,
+   points, connecting bones, then the life, head, heart and fate lines placed from the hand's own
+   landmarks (`src/lib/palmGeometry.ts`, `src/components/HandMesh.tsx`). The model and runtime are
+   downloaded from Google/jsDelivr on first use; the photo itself never leaves the browser for this
+   step. If tracking cannot load, everything still works with the illustrated guide.
+4. **Reading** — the compressed photo goes to `POST /api/analyze`; the server calls Claude vision with
+   a palmist prompt, a traditional rulebook and a JSON schema, validates the result and retries once.
+5. **Report** — persona card, superpower, lucky stuff, study style, career matches, stats radar,
+   level-up zones with a fix for each, line map, and deep-dive sections (vibe, studies, career,
+   friends, wellbeing, year ahead, daily habits, journey, lines, mounts).
+6. **Aftercare** — Save PDF, a 1080×1920 share card for stories, and "Ask Maya" chat scoped to the reading.
 
-### Safety contract
+### Safety
 
-`src/lib/report.ts` is the single contract used by both server and UI. It normalises model output,
-fills every catalogued feature (marking omissions **not clearly visible**), clamps confidence,
-requires the both-hands comparison only when two hands were supplied, and scans every string for
-predictions of death/lifespan, disease/diagnosis, pregnancy/children and legal outcomes. Violations
-trigger one corrective retry; a repeated violation is redacted with language-appropriate safe copy.
-Health is framed as general lifestyle tendencies only.
-
-The same guard runs on follow-up questions.
+`src/lib/report.ts` is the single contract for server and UI. Every string is scanned for predictions
+of death/lifespan, disease, pregnancy, legal outcomes and guarantees; violations trigger a corrective
+retry and are redacted if repeated. Readings never predict marriage or exam results, and wellbeing is
+framed as lifestyle only. The same guard runs on chat questions and answers.
 
 ### Privacy
 
-- The photo is analysed and held only in browser memory; it is discarded as soon as a reading exists
-  and is **never** written to `sessionStorage`, `localStorage` or the server filesystem.
-- Only the report JSON is persisted, per tab, so a reload keeps the reading (without the photo).
-- The API key lives in the server environment and never reaches the browser.
+- The photo lives only in browser memory and is dropped as soon as the reading exists; it is never
+  written to storage or to the server's disk.
+- Only the reading JSON is kept, per tab, so a reload keeps it.
+- The API key stays on the server.
 
 ## Structure
 
 ```
-server/
-  index.ts      entry (env + listen)
-  app.ts        API routes, validation, SPA/Vite serving
-  analyze.ts    Claude vision call, retries, redaction
-  rules.ts      traditional rulebook + planetary correspondences
-  prompt.ts     palmist system prompt + JSON schema
-  demo.ts       contract-valid sample reading (Hinglish)
-  chat.ts       report-scoped follow-up chat (+ offline replies)
-src/
-  screens/      Landing, Details, Capture, Scanning, Report
-  components/   hand guide, palm overlay, radar, accordions, chat sheet, UI kit
-  lib/          report contract, quality gate, i18n, API client, share card, session
-tests/          executable contract (report, quality, copy, capture gating, chat)
+server/   index (http server) · app (routes) · analyze (Claude vision) · prompt · rules · demo · chat
+src/      screens/ (Landing, Details, Capture, Scanning, Report) · components/ · lib/
+tests/    report contract, quality gate, copy, capture gating, chat
 ```
-
-## Known limits
-
-- Back-of-hand detection is a heuristic (texture + highlight ratio), not a trained classifier, so it
-  only ever warns; blur/exposure/“no hand” are the hard gates.
-- Palm line positions in the annotated map are schematic — they guide the eye, they are not detected
-  landmarks.
-- PDF export uses the browser's print dialog (best fidelity for Devanagari); the visible label and
-  print stylesheet are tuned for "Save as PDF".
-- Camera requires a secure context (`localhost` or HTTPS) and user permission; upload always remains
-  available.
