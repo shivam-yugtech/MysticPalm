@@ -28,6 +28,7 @@ export function PanditJi({
   const [speaking, setSpeaking] = useState(false);
   const [beat, setBeat] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [gemini, setGemini] = useState<string | null>(getGeminiKey);
   const spoken = useRef(false);
   const line = lines[index % lines.length] ?? '';
@@ -70,13 +71,15 @@ export function PanditJi({
       },
     };
     const fallback = () => {
-      if (useClip) playClip(clip!, events);
+      if (useClip) playClip(clip!, events).catch(() => void speak(text, language, events));
       else void speak(text, language, events);
     };
+    setNotice(null);
     if (!gemini) return fallback();
     setLoading(true);
-    speakGemini(gemini, text, language, events).catch(() => {
+    speakGemini(gemini, text, language, events).catch((error: unknown) => {
       setLoading(false);
+      setNotice(error instanceof Error ? error.message : String(error));
       fallback();
     });
   }, [text, language, useClip, clip, gemini]);
@@ -124,6 +127,7 @@ export function PanditJi({
             {loading ? <span className="spinner spinner--xs" aria-hidden="true" /> : speaking ? '⏸' : '🔊'} {speaking ? PANDIT_COPY[language].stop : PANDIT_COPY[language].listen}
           </button>
         )}
+        {notice && <p className="pandit__notice">⚠ {notice}</p>}
       </div>
     </div>
   );

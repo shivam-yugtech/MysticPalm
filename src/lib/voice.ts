@@ -57,18 +57,50 @@ export const stopSpeaking = () => {
   if (voiceSupported()) window.speechSynthesis.cancel();
 };
 
-let clipStop: (() => void) | null = null;
+type VoiceEvents = { onStart?: () => void; onWord?: () => void; onEnd?: () => void };
 
-export function playClip(src: string, events: { onStart?: () => void; onWord?: () => void; onEnd?: () => void } = {}): void {
+let clipStop: (() => void) | null = null;
+let sharedContext: AudioContext | null = null;
+
+const audioContext = (): AudioContext | null => {
+  if (!sharedContext) {
+    try {
+      sharedContext = new AudioContext();
+    } catch {
+      sharedContext = null;
+    }
+  }
+  return sharedContext;
+};
+
+export const audioState = () => sharedContext?.state ?? "none";
+
+export const unlockAudio = () => {
+  const context = audioContext();
+  if (context && context.state !== 'running') void context.resume().catch(() => undefined);
+};
+
+if (typeof window !== 'undefined') {
+  for (const type of ['pointerdown', 'keydown', 'touchend']) window.addEventListener(type, unlockAudio, { passive: true });
+}
+
+export async function playClip(src: string, events: VoiceEvents = {}): Promise<void> {
   stopSpeaking();
   const audio = new Audio(src);
+  audio.preload = 'auto';
   let frame = 0;
-  let context: AudioContext | null = null;
+  let pulse = 0;
   let loud = false;
+  let done = false;
+  let nodes: AudioNode[] = [];
+
   const finish = () => {
+    if (done) return;
+    done = true;
     cancelAnimationFrame(frame);
-    void context?.close().catch(() => undefined);
-    context = null;
+    window.clearInterval(pulse);
+    nodes.forEach((node) => node.disconnect());
+    nodes = [];
     if (clipStop === stop) clipStop = null;
     events.onEnd?.();
   };
@@ -77,54 +109,76 @@ export function playClip(src: string, events: { onStart?: () => void; onWord?: (
     finish();
   };
   clipStop = stop;
-  try {
-    context = new AudioContext();
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 512;
-    context.createMediaElementSource(audio).connect(analyser);
-    analyser.connect(context.destination);
-    const data = new Uint8Array(analyser.fftSize);
-    const tick = () => {
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (const v of data) sum += (v - 128) ** 2;
-      const level = Math.sqrt(sum / data.length) / 128;
-      if (level > 0.08 && !loud) events.onWord?.();
-      loud = level > 0.06;
-      frame = requestAnimationFrame(tick);
-    };
-    audio.addEventListener('play', () => (frame = requestAnimationFrame(tick)), { once: true });
-  } catch {
-    context = null;
+
+  const context = audioContext();
+  if (context && context.state !== 'running') await context.resume().catch(() => undefined);
+
+  if (context?.state === 'running') {
+    try {
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      const source = context.createMediaElementSource(audio);
+      source.connect(analyser);
+      analyser.connect(context.destination);
+      nodes = [source, analyser];
+      const data = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (const v of data) sum += (v - 128) ** 2;
+        const level = Math.sqrt(sum / data.length) / 128;
+        if (level > 0.08 && !loud) events.onWord?.();
+        loud = level > 0.06;
+        frame = requestAnimationFrame(tick);
+      };
+      audio.addEventListener('playing', () => (frame = requestAnimationFrame(tick)), { once: true });
+    } catch {
+      nodes = [];
+    }
   }
-  audio.addEventListener('play', () => events.onStart?.(), { once: true });
+  if (!nodes.length) {
+    audio.addEventListener('playing', () => (pulse = window.setInterval(() => events.onWord?.(), 240)), { once: true });
+  }
+
   audio.addEventListener('ended', finish, { once: true });
   audio.addEventListener('error', finish, { once: true });
-  void audio.play().catch(finish);
+  try {
+    await audio.play();
+  } catch (error) {
+    finish();
+    throw error;
+  }
+  if (!done) events.onStart?.();
 }
 
 const geminiCache = new Map<string, string>();
 
-export async function speakGemini(
-  key: string,
-  text: string,
-  language: Language,
-  events: { onStart?: () => void; onWord?: () => void; onEnd?: () => void } = {},
-): Promise<void> {
+export async function speakGemini(key: string, text: string, language: Language, events: VoiceEvents = {}): Promise<void> {
   const cacheKey = `${language}:${text}`;
   let url = geminiCache.get(cacheKey);
   if (!url) {
-    const res = await fetch('/api/tts', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-gemini-key': key },
-      body: JSON.stringify({ text, language }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(body?.error ?? 'Gemini voice failed.');
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 45_000);
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-gemini-key': key },
+        body: JSON.stringify({ text, language }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? 'Gemini voice failed.');
+      }
+      const blob = await res.blob();
+      if (!blob.size || !blob.type.startsWith('audio/')) throw new Error('Gemini sent no audio back.');
+      url = URL.createObjectURL(blob);
+      geminiCache.set(cacheKey, url);
+    } catch (error) {
+      throw error instanceof DOMException && error.name === 'AbortError' ? new Error('Gemini voice took too long.') : error;
+    } finally {
+      window.clearTimeout(timer);
     }
-    url = URL.createObjectURL(await res.blob());
-    geminiCache.set(cacheKey, url);
   }
-  playClip(url, events);
+  await playClip(url, events);
 }
