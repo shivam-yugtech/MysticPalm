@@ -1,7 +1,7 @@
 import { AnalysisError } from './analyze';
 import type { Language } from '../src/lib/report';
 
-const BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const BASE = () => process.env.GEMINI_API_BASE?.trim() || 'https://generativelanguage.googleapis.com/v1beta';
 const MODEL = () => process.env.GEMINI_TTS_MODEL?.trim() || 'gemini-3.8-flash-tts';
 const FALLBACK_VOICE = 'Puck';
 const STYLE =
@@ -23,16 +23,21 @@ async function call(url: string, key: string, init: RequestInit = {}, ms = 30_00
   }
 }
 
-const failure = (status: number): AnalysisError =>
-  status === 400 || status === 401 || status === 403
-    ? new AnalysisError('Gemini rejected this API key. Check it and try again.', 401)
-    : status === 429
-      ? new AnalysisError('Gemini voice limit reached for now. Try again in a minute.', 429)
-      : new AnalysisError('Gemini voice is unavailable right now.', 502);
+async function failure(res: Response): Promise<AnalysisError> {
+  const body = (await res.json().catch(() => null)) as { error?: { message?: string; status?: string } } | null;
+  const message = body?.error?.message ?? '';
+  const code = body?.error?.status ?? '';
+  console.warn('[tts] Gemini', res.status, code, message.slice(0, 200));
+  if (res.status === 401 || res.status === 403 || /api key|API_KEY/i.test(`${message} ${code}`)) {
+    return new AnalysisError('Gemini rejected this API key. Check it and try again.', 401);
+  }
+  if (res.status === 429) return new AnalysisError('Gemini voice limit reached for now. Try again in a minute.', 429);
+  return new AnalysisError(`Gemini voice error: ${message || `HTTP ${res.status}`}`.slice(0, 220), 502);
+}
 
 export async function checkKey(key: string): Promise<void> {
-  const res = await call(`${BASE}/models?pageSize=1`, key, { method: 'GET' }, 10_000);
-  if (!res.ok) throw failure(res.status);
+  const res = await call(`${BASE()}/models?pageSize=1`, key, { method: 'GET' }, 10_000);
+  if (!res.ok) throw await failure(res);
 }
 
 async function pickVoice(key: string, language: Language): Promise<string> {
@@ -42,7 +47,7 @@ async function pickVoice(key: string, language: Language): Promise<string> {
   if (cached) return cached;
   let voice = FALLBACK_VOICE;
   try {
-    const res = await call(`${BASE}/voices?language_code=${lang}&gender=male&page_size=10`, key, { method: 'GET' }, 8_000);
+    const res = await call(`${BASE()}/voices?language_code=${lang}&gender=male&page_size=10`, key, { method: 'GET' }, 8_000);
     if (res.ok) {
       const body = (await res.json()) as { voices?: { id?: string; name?: string }[] };
       const found = body.voices?.find((v) => v.id || v.name);
@@ -91,7 +96,7 @@ function extractAudio(body: unknown): { data: string; mime: string } | null {
 }
 
 async function synthesize(key: string, text: string, voice: string): Promise<Response> {
-  return call(`${BASE}/interactions`, key, {
+  return call(`${BASE()}/interactions`, key, {
     method: 'POST',
     body: JSON.stringify({
       model: MODEL(),
@@ -105,12 +110,18 @@ async function synthesize(key: string, text: string, voice: string): Promise<Res
 export async function geminiSpeech(input: { key: string; text: string; language: Language }): Promise<Buffer> {
   const voice = await pickVoice(input.key, input.language);
   let res = await synthesize(input.key, input.text, voice);
-  if (!res.ok && voice !== FALLBACK_VOICE && res.status === 400) {
+  if (!res.ok && voice !== FALLBACK_VOICE && ![401, 403, 429].includes(res.status)) {
+    console.warn('[tts] voice', voice, 'failed with', res.status, '- retrying with', FALLBACK_VOICE);
+    voiceCache.set(`${input.key.slice(-6)}:${input.language === 'hi' ? 'hi-IN' : 'en-IN'}`, FALLBACK_VOICE);
     res = await synthesize(input.key, input.text, FALLBACK_VOICE);
   }
-  if (!res.ok) throw failure(res.status);
-  const audio = extractAudio(await res.json().catch(() => null));
-  if (!audio) throw new AnalysisError('Gemini sent no audio back.', 502);
+  if (!res.ok) throw await failure(res);
+  const json = await res.json().catch(() => null);
+  const audio = extractAudio(json);
+  if (!audio) {
+    console.warn('[tts] no audio in response, keys:', Object.keys((json ?? {}) as object).join(','));
+    throw new AnalysisError('Gemini sent no audio back.', 502);
+  }
   const bytes = Buffer.from(audio.data, 'base64');
   if (/wav/i.test(audio.mime) || bytes.subarray(0, 4).toString() === 'RIFF') return bytes;
   const rate = Number(/rate=(\d+)/.exec(audio.mime)?.[1]) || 24_000;

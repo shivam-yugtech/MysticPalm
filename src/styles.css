@@ -4436,3 +4436,11 @@ h3 {
     flex-direction: column;
   }
 }
+
+.pandit__notice {
+  margin-top: 8px;
+  color: #b4532a;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  min-height: 0 !important;
+}
